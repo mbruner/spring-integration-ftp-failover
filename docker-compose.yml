@@ -1,0 +1,16 @@
+version: '2'
+services:
+  ftp:
+    image: stilliard/pure-ftpd:hardened
+    ports:
+     - "21:21"
+     - "30000-30009:30000-30009"
+    volumes:
+     - ./ftp-content:/home/ftpusers
+    environment:
+     - PUBLICHOST=localhost
+  redis:
+    image: redis
+    ports:
+     - "6379:6379"
+

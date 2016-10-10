@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:int="http://www.springframework.org/schema/integration"
+       xmlns:int-file="http://www.springframework.org/schema/integration/file"
+       xmlns:int-ftp="http://www.springframework.org/schema/integration/ftp"
+       xmlns:task="http://www.springframework.org/schema/task"
+       xsi:schemaLocation="	http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+		http://www.springframework.org/schema/integration/file http://www.springframework.org/schema/integration/file/spring-integration-file.xsd
+		http://www.springframework.org/schema/integration http://www.springframework.org/schema/integration/spring-integration.xsd
+		http://www.springframework.org/schema/integration/ftp http://www.springframework.org/schema/integration/ftp/spring-integration-ftp.xsd
+		http://www.springframework.org/schema/task http://www.springframework.org/schema/task/spring-task.xsd">
+
+
+    <int-ftp:inbound-channel-adapter id="ftpInbound"
+                                     session-factory="ftpClientFactory"
+                                     filter="ftpRemoteCompositeFilter"
+                                     auto-create-local-directory="true"
+                                     delete-remote-files="false"
+                                     remote-directory="/in"
+                                     local-directory="./build/tmp/ftpInbound"
+                                     local-filter="ftpLocalCompositeFilter">
+
+        <int:poller fixed-rate="5000" max-messages-per-poll="1" task-executor="executor">
+            <int:transactional synchronization-factory="syncFactory"/>
+        </int:poller>
+    </int-ftp:inbound-channel-adapter>
+
+    <int:transaction-synchronization-factory id="syncFactory">
+        <int:after-commit expression="@ftpLocalAcceptOnceRetriableFilter.commit(payload)"/>
+    </int:transaction-synchronization-factory>
+
+    <int:service-activator input-channel="ftpInbound" ref="processor" method="process">
+        <int:request-handler-advice-chain>
+            <bean class="org.springframework.integration.handler.advice.ExpressionEvaluatingRequestHandlerAdvice">
+                <property name="successChannel" ref="filesOut"/>
+                <property name="onSuccessExpression" value="payload"/>
+            </bean>
+        </int:request-handler-advice-chain>
+    </int:service-activator>
+    <bean id="processor" class="com.epam.cc.java.ftp.prototype.demo.DelayedProcessor"/>
+
+    <int-file:outbound-channel-adapter id="filesOut"
+                                       directory="./build/tmp/ftpProcessed"
+                                       delete-source-files="true"/>
+
+    <int:wire-tap pattern="ftpInbound, filesOut" channel="logger"/>
+
+    <int:logging-channel-adapter id="logger" level="DEBUG" log-full-message="true"/>
+
+    <task:executor id="executor" pool-size="2"/>
+
+    <bean id="ftpRemoteCompositeFilter"
+          class="org.springframework.integration.file.filters.CompositeFileListFilter">
+        <constructor-arg>
+            <list>
+                <bean class="org.springframework.integration.ftp.filters.FtpPersistentAcceptOnceFileListFilter">
+                    <constructor-arg ref="metadataStore"/>
+                    <constructor-arg value="ftpRemoteAcceptOnceFilter-"/>
+                </bean>
+                <!--bean class="com.epam.cc.java.ftp.prototype.FtpPersistentAcceptOnceRetriableFileListFilter">
+                    <constructor-arg ref="metadataStore"/>
+                    <constructor-arg value="ftpRemoteAcceptOnceRetriableFilter"/>
+                </bean-->
+                <bean class="org.springframework.integration.ftp.filters.FtpSimplePatternFileListFilter">
+                    <constructor-arg value="*.txt"/>
+                </bean>
+            </list>
+        </constructor-arg>
+    </bean>
+
+    <bean id="ftpLocalCompositeFilter"
+          class="org.springframework.integration.file.filters.CompositeFileListFilter">
+        <constructor-arg>
+            <list>
+                <ref bean="ftpLocalAcceptOnceRetriableFilter"/>
+            </list>
+        </constructor-arg>
+    </bean>
+
+    <bean name="ftpLocalAcceptOnceRetriableFilter"
+          class="com.epam.cc.java.ftp.prototype.FilePersistentAcceptOnceRetriableFileListFilter">
+        <constructor-arg ref="metadataStore"/>
+        <constructor-arg value="ftpLocalAcceptOnceRetriableFilter-"/>
+        <property name="retryTimeoutSeconds" value="20"/>
+        <property name="maxAcceptedFileListLength" value="1"/>
+    </bean>
+
+    <bean id="transactionManager"
+          class="org.springframework.integration.transaction.PseudoTransactionManager"/>
+
+
+    <bean name="metadataStore" class="org.springframework.integration.redis.metadata.RedisMetadataStore">
+        <constructor-arg ref="redisConnectionFactory"/>
+        <constructor-arg value="si"/>
+    </bean>
+
+    <bean id="redisConnectionFactory"
+          class="org.springframework.data.redis.connection.jedis.JedisConnectionFactory">
+        <property name="hostName" value="localhost"/>
+        <property name="port" value="6379"/>
+    </bean>
+
+    <bean id="ftpClientFactory"
+          class="org.springframework.integration.ftp.session.DefaultFtpSessionFactory">
+        <property name="host" value="localhost"/>
+        <property name="port" value="21"/>
+        <property name="username" value="bob"/>
+        <property name="password" value="bob"/>
+        <property name="clientMode" value="2"/>
+    </bean>
+
+</beans>
